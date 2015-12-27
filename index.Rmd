@@ -5,18 +5,56 @@ date: "December 27, 2015"
 output: html_document
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+In this project, the goal was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+The training data set contains several columns with NA or empty strings which cannot be used for prediction and were removed early:
 
 ```{r}
-summary(cars)
+d <- read.csv("pml-training.csv", na.strings=c(""," ","NA"))
+na_ratio <- numeric()
+for(i in names(d)) { na_ratio[i] <- 100*sum(is.na(d[,i]))/nrow(d); }
+na_cols <- which(na_ratio > 90)
+training <- d[,-na_cols]
 ```
 
-You can also embed plots, for example:
+In the resulting data frame colums 1 to 7 are ids, timestamps and windows of measurements. For a first draft of the analysis user_name (column 2) was preserved as it might influence the prediction, all other time series dropped:
 
-```{r, echo=FALSE}
-plot(cars)
+```{r}
+training <- training[,-c(1, 3:7)]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+RandomForest is then executed on the entire training data, to predict 'classe' against the data from all sensors and the user_name (53 predictors).
+
+RandomForest was chosen because it is known to provide excellent results without much tuning, and because we lack domain knowledge expertise on the type of weight lifting exercises performed.
+
+RandomForest automatically performs cross validation in the training data by generating the Out Of Bag error rate. The result appears quite good here, with a OOB estimate reported at 0.27%
+
+```{r}
+library(randomForest)
+set.seed(100)
+rfmodel <- randomForest(classe ~., data=training, importance=TRUE)
+print(rfmodel)
+100*sum((rfmodel$confusion)[,"class.error"])
+```
+
+The actual error rate on the training set reported in the confusion matrix is 1.5% and we expect >98% accuracy on new predictions due to the low OOB error rate.
+
+'Importance' was calculated to review if any parameter had any large impact on the prediction. This shows in particular that  user_name has very little impact, and that the model could be made more generic by removing this variable:
+```{r}
+sort(importance(rfmodel)[,"MeanDecreaseAccuracy"], decreasing = T)
+set.seed(100)
+rfmodel2 <- randomForest(classe ~., data=training[,-1], importance=TRUE)
+print(rfmodel2)
+100*sum((rfmodel2$confusion)[,"class.error"])
+```
+
+The OOB error in such case increases only slightly to 0.28%, and the error on training becomes 1.6%.
+
+For the prediction on the test set however, the slightly better model with user_name included was applied:
+
+```{r}
+t <- read.csv("pml-testing.csv", na.strings=c(""," ","NA"))
+testing <- t[,-na_cols]
+testing <- testing[,-c(1, 3:7)]
+predict(rfmodel, testing)
+```
